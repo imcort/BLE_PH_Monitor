@@ -173,6 +173,15 @@ static void batt_timer_handler(void * p_context)
 			use_count++;
 }
 
+static float ADCtoVoltage(nrf_saadc_value_t saadc_val){
+	
+	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
+	
+	float phvoltage = (1250.0f - accurate)/3.0f;
+	
+	return phvoltage;
+}
+
 static void send_one_sample(nrf_saadc_value_t saadc_val, int32_t count){
 	
 	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
@@ -195,28 +204,32 @@ static void send_one_sample(nrf_saadc_value_t saadc_val, int32_t count){
 
 }
 
-static void send_one_sample_now(nrf_saadc_value_t saadc_val){
-	
-	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
-	
-	float phvoltage = (1250.0f - accurate)/3.0f;
-	
-	
-	nrf_saadc_value_t vdd_val;
-	nrfx_saadc_sample_convert(1,&vdd_val);
-	
-	float vddvoltage = (float)vdd_val * 3600.0f / 4096.0f;
-				
-	char sendtemp[240];
-	uint16_t llength = sprintf(sendtemp,"ADC value: %d\nADC voltage: %.2f mV\nPH voltage: %.2f mV\nVDD voltage: %d mV",
-																																						saadc_val, 
-																																						accurate, 
-																																							phvoltage, 
-																																								(int)vddvoltage);
-			
-	ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
 
-}
+
+
+
+//static void send_one_sample_now(nrf_saadc_value_t saadc_val){
+//	
+//	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
+//	
+//	float phvoltage = (1250.0f - accurate)/3.0f;
+//	
+//	
+//	nrf_saadc_value_t vdd_val;
+//	nrfx_saadc_sample_convert(1,&vdd_val);
+//	
+//	float vddvoltage = (float)vdd_val * 3600.0f / 4096.0f;
+//				
+//	char sendtemp[240];
+//	uint16_t llength = sprintf(sendtemp,"ADC value: %d\nADC voltage: %.2f mV\nPH voltage: %.2f mV\nVDD voltage: %d mV",
+//																																						saadc_val, 
+//																																						accurate, 
+//																																							phvoltage, 
+//																																								(int)vddvoltage);
+//			
+//	ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
+
+//}
 
 
 static void adc_timer_handler(void * p_context)
