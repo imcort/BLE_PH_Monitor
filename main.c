@@ -126,11 +126,12 @@ static const char DEVICE_NAME[] =       {0xe7, 0x82, 0xb9,
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
-#define ADC_ACQUIRE_TIME_INTERVAL       3000   //ms default:60000
+#define ADC_ACQUIRE_TIME_INTERVAL       60000   //ms default:60000
 #define BATTERY_TIME_INTERVAL           60000   //ms default:60000
 #define TOTAL_USE_TIME                  4320   //minutes
 #define SAMPLE_AVERAGE_COUNT            128	
 #define QUEUE_SIZE                      2880
+#define AMP_FACTOR                      3.0f
 
 BLE_NUS_DEF(m_nus, NRF_SDH_BLE_TOTAL_LINK_COUNT);                                   /**< BLE NUS service instance. */
 BLE_BAS_DEF(m_bas);                                                 /**< Structure used to identify the battery service. */
@@ -177,16 +178,16 @@ static float ADCtoVoltage(nrf_saadc_value_t saadc_val){
 	
 	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
 	
-	float phvoltage = (1250.0f - accurate)/3.0f;
+	float voltage = (1250.0f - accurate)/AMP_FACTOR;
 	
-	return phvoltage;
+	return voltage;
 }
 
 static void send_one_sample(nrf_saadc_value_t saadc_val, int32_t count){
 	
 	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
 	
-	float phvoltage = (1250.0f - accurate)/3.0f;
+	float phvoltage = (1250.0f - accurate)/AMP_FACTOR;
 	
 	nrfx_saadc_sample_convert(1,&saadc_val);
 	
@@ -204,48 +205,28 @@ static void send_one_sample(nrf_saadc_value_t saadc_val, int32_t count){
 
 }
 
+static nrf_saadc_value_t get_average_adc(uint8_t channel){
 
-
-
-
-//static void send_one_sample_now(nrf_saadc_value_t saadc_val){
-//	
-//	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
-//	
-//	float phvoltage = (1250.0f - accurate)/3.0f;
-//	
-//	
-//	nrf_saadc_value_t vdd_val;
-//	nrfx_saadc_sample_convert(1,&vdd_val);
-//	
-//	float vddvoltage = (float)vdd_val * 3600.0f / 4096.0f;
-//				
-//	char sendtemp[240];
-//	uint16_t llength = sprintf(sendtemp,"ADC value: %d\nADC voltage: %.2f mV\nPH voltage: %.2f mV\nVDD voltage: %d mV",
-//																																						saadc_val, 
-//																																						accurate, 
-//																																							phvoltage, 
-//																																								(int)vddvoltage);
-//			
-//	ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
-
-//}
-
-
-static void adc_timer_handler(void * p_context)
-{
-	
 	int32_t sample_average = 0;
 	nrf_saadc_value_t saadc_val;
 	
 	for(int i=0;i<SAMPLE_AVERAGE_COUNT;i++){
 		
-		nrfx_saadc_sample_convert(0,&saadc_val);
+		nrfx_saadc_sample_convert(channel,&saadc_val);
 		sample_average += saadc_val;
 	
 	}
 	sample_average /= SAMPLE_AVERAGE_COUNT;
-	saadc_val = sample_average;
+
+	return sample_average;
+
+}
+
+static void adc_timer_handler(void * p_context)
+{
+	
+	
+	nrf_saadc_value_t saadc_val = get_average_adc(0);
 	
 	if(!nrf_queue_is_full(&m_adc_queue))
 		adc_value_count++;
@@ -555,20 +536,75 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
 static void nus_data_handler(ble_nus_evt_t * p_evt)
 {
 
+	uint16_t i,llength;
+	nrf_saadc_value_t saadc_val;
+	
     if (p_evt->type == BLE_NUS_EVT_RX_DATA)
     {
 			
-			if(!nrf_queue_is_empty(&m_adc_queue)){
+			switch(p_evt->params.rx_data.p_data[0]){
+				case 'a':
+					
+				if(!nrf_queue_is_empty(&m_adc_queue)){
 			
-				//uint32_t err_code;
-			
-				nrf_saadc_value_t saadc_val;
-			
-				nrf_queue_pop(&m_adc_queue,&saadc_val);
+					
+					nrf_queue_pop(&m_adc_queue,&saadc_val);
 				
 				send_one_sample(saadc_val,adc_value_count--);
 			
 			}
+				
+				
+					break;
+				case 'b':
+					
+				i = nrf_queue_available_get(&m_adc_queue);
+				char sendtemp[200];
+				llength = sprintf(sendtemp,"Available:%d",i);
+			
+				ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
+				
+				
+				
+					break;
+				case 'c':
+					
+				saadc_val = get_average_adc(0);
+				send_one_sample(saadc_val,0);
+				
+				
+				
+					break;
+				case 'd':
+					
+				
+				
+				
+				
+					break;
+				case 'e':
+					
+				
+				
+				
+				
+					break;
+				default:
+					
+				
+				
+				
+				
+					break;
+			
+			
+			
+			
+			
+			}
+			
+			
+			
         
 
         //NRF_LOG_DEBUG("Received data from BLE NUS. Writing data on UART.");
