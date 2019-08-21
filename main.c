@@ -126,7 +126,7 @@ static const char DEVICE_NAME[] =       {0xe7, 0x82, 0xb9,
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
-#define ADC_ACQUIRE_TIME_INTERVAL       60000   //ms default:60000
+#define ADC_ACQUIRE_TIME_INTERVAL       3000   //ms default:60000
 #define BATTERY_TIME_INTERVAL           60000   //ms default:60000
 #define TOTAL_USE_TIME                  4320   //minutes
 #define SAMPLE_AVERAGE_COUNT            128	
@@ -151,7 +151,6 @@ NRF_QUEUE_DEF(nrf_saadc_value_t, m_adc_queue, QUEUE_SIZE, NRF_QUEUE_MODE_OVERFLO
 // YOUR_JOB: Use UUIDs for service(s) used in your application.
 //static ble_uuid_t m_adv_uuids[] = {{BLE_UUID_DEVICE_INFORMATION_SERVICE, BLE_UUID_TYPE_BLE}};
 
-
 static void batt_timer_handler(void * p_context)
 {
     ret_code_t err_code;
@@ -174,6 +173,12 @@ static void batt_timer_handler(void * p_context)
 			use_count++;
 }
 
+static uint16_t getAvailableCount(){
+
+ return QUEUE_SIZE - nrf_queue_available_get(&m_adc_queue);
+
+}
+
 static float ADCtoVoltage(nrf_saadc_value_t saadc_val){
 	
 	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
@@ -185,34 +190,30 @@ static float ADCtoVoltage(nrf_saadc_value_t saadc_val){
 
 static void send_one_sample(nrf_saadc_value_t saadc_val, int32_t count){
 	
+	ret_code_t err_code;
 	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
 	
-	float phvoltage = (1250.0f - accurate)/AMP_FACTOR;
-	
-	nrfx_saadc_sample_convert(1,&saadc_val);
-	
-	float vddvoltage = (float)saadc_val * 3600.0f / 4096.0f;//16384;
+	float phvoltage = (1250.0f - accurate) / AMP_FACTOR;
 				
 	char sendtemp[200];
-	uint16_t llength = sprintf(sendtemp,"ADC value: %d\nADC voltage: %d /10mV\nPH voltage: %d /10mV\nVDD voltage: %d mV\nThis data is %ds ago.",
+	uint16_t llength = sprintf(sendtemp,"ADC value: %d\nADC voltage: %.4f mV\nPH voltage: %.4f mV\n",
 																																						saadc_val, 
-																																						(int)(accurate*10), 
-																																							(int)(phvoltage*10), 
-																																								(int)vddvoltage, 
-																																									count*30);
+																																						accurate, 
+																																						phvoltage);
 			
-	ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
-
+	err_code = ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
+	APP_ERROR_CHECK(err_code);
 }
 
 static nrf_saadc_value_t get_average_adc(uint8_t channel){
-
+	ret_code_t err_code;
 	int32_t sample_average = 0;
 	nrf_saadc_value_t saadc_val;
 	
 	for(int i=0;i<SAMPLE_AVERAGE_COUNT;i++){
 		
-		nrfx_saadc_sample_convert(channel,&saadc_val);
+		err_code = nrfx_saadc_sample_convert(channel,&saadc_val);
+		APP_ERROR_CHECK(err_code);
 		sample_average += saadc_val;
 	
 	}
@@ -535,9 +536,10 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
  */
 static void nus_data_handler(ble_nus_evt_t * p_evt)
 {
-
-	uint16_t i,llength;
+	uint32_t err_code;
+	uint16_t i,llength,available;
 	nrf_saadc_value_t saadc_val;
+	int16_t sendValueBuf[121];
 	
     if (p_evt->type == BLE_NUS_EVT_RX_DATA)
     {
@@ -546,11 +548,22 @@ static void nus_data_handler(ble_nus_evt_t * p_evt)
 				case 'a':
 					
 				if(!nrf_queue_is_empty(&m_adc_queue)){
-			
 					
-					nrf_queue_pop(&m_adc_queue,&saadc_val);
-				
-				send_one_sample(saadc_val,adc_value_count--);
+					available = getAvailableCount();
+					sendValueBuf[0] =  available;
+					for(i=1;i<=available;i++){
+					
+							err_code = nrf_queue_pop(&m_adc_queue,&saadc_val);
+							APP_ERROR_CHECK(err_code);
+						
+							sendValueBuf[i] = saadc_val;
+							if(i==120) break;
+					
+					}
+					llength = i*2;
+			
+					err_code = ble_nus_data_send(&m_nus, (uint8_t*)sendValueBuf, &llength, m_conn_handle);
+					APP_ERROR_CHECK(err_code);
 			
 			}
 				
@@ -558,18 +571,20 @@ static void nus_data_handler(ble_nus_evt_t * p_evt)
 					break;
 				case 'b':
 					
-				i = nrf_queue_available_get(&m_adc_queue);
+				i = getAvailableCount();
 				char sendtemp[200];
-				llength = sprintf(sendtemp,"Available:%d",i);
+				llength = sprintf(sendtemp,"Stored:%d",i);
 			
-				ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
-				
+				err_code = ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
+				APP_ERROR_CHECK(err_code);
 				
 				
 					break;
 				case 'c':
 					
-				saadc_val = get_average_adc(0);
+				//saadc_val = get_average_adc(0);
+				err_code = nrfx_saadc_sample_convert(0,&saadc_val);
+				APP_ERROR_CHECK(err_code);
 				send_one_sample(saadc_val,0);
 				
 				
