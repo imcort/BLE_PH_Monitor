@@ -93,6 +93,8 @@
 #include "nrf_drv_saadc.h"
 #include "app_timer.h"
 
+#include "nrf_temp.h"
+
 static const char DEVICE_NAME[] =       {0xe7, 0x82, 0xb9,
 																					0xe6, 0x88, 0x91, 
 																					0xe6, 0xb5, 0x8b, 
@@ -128,6 +130,7 @@ static const char DEVICE_NAME[] =       {0xe7, 0x82, 0xb9,
 
 #define ADC_ACQUIRE_TIME_INTERVAL       3000   //ms default:60000
 #define BATTERY_TIME_INTERVAL           60000   //ms default:60000
+#define TEMP_TIME_INTERVAL              500
 #define TOTAL_USE_TIME                  4320   //minutes
 #define SAMPLE_AVERAGE_COUNT            128	
 #define QUEUE_SIZE                      2880
@@ -145,11 +148,34 @@ static uint16_t m_conn_handle = BLE_CONN_HANDLE_INVALID;                        
 static uint32_t 	adc_value_count = 0;
 APP_TIMER_DEF(adc_timer);
 APP_TIMER_DEF(batt_timer);
+APP_TIMER_DEF(temp_timer);
 
 NRF_QUEUE_DEF(nrf_saadc_value_t, m_adc_queue, QUEUE_SIZE, NRF_QUEUE_MODE_OVERFLOW);
 
 // YOUR_JOB: Use UUIDs for service(s) used in your application.
 //static ble_uuid_t m_adv_uuids[] = {{BLE_UUID_DEVICE_INFORMATION_SERVICE, BLE_UUID_TYPE_BLE}};
+
+static void temp_timer_handler(void * p_context)
+{
+		int32_t volatile temp;
+		NRF_TEMP->TASKS_START = 1; /** Start the temperature measurement. */
+
+		/* Busy wait while temperature measurement is not finished, you can skip waiting if you enable interrupt for DATARDY event and read the result in the interrupt. */
+		/*lint -e{845} // A zero has been given as right argument to operator '|'" */
+		while (NRF_TEMP->EVENTS_DATARDY == 0)
+		{
+				// Do nothing.
+		}
+		NRF_TEMP->EVENTS_DATARDY = 0;
+
+		/**@note Workaround for PAN_028 rev2.0A anomaly 29 - TEMP: Stop task clears the TEMP register. */
+		temp = (nrf_temp_read() / 4);
+
+		/**@note Workaround for PAN_028 rev2.0A anomaly 30 - TEMP: Temp module analog front end does not power down when DATARDY event occurs. */
+		NRF_TEMP->TASKS_STOP = 1; /** Stop the temperature measurement. */
+
+		NRF_LOG_INFO("Actual temperature: %d", (int)temp);
+}
 
 static void batt_timer_handler(void * p_context)
 {
@@ -477,6 +503,9 @@ static void timers_init(void)
 	
 		 err_code = app_timer_create(&batt_timer, APP_TIMER_MODE_REPEATED, batt_timer_handler);
      APP_ERROR_CHECK(err_code); 
+	
+		 err_code = app_timer_create(&temp_timer, APP_TIMER_MODE_REPEATED, temp_timer_handler);
+     APP_ERROR_CHECK(err_code); 
 }
 
 
@@ -741,6 +770,8 @@ static void application_timers_start(void)
        err_code = app_timer_start(adc_timer, APP_TIMER_TICKS(ADC_ACQUIRE_TIME_INTERVAL), NULL);
        APP_ERROR_CHECK(err_code);
 			 err_code = app_timer_start(batt_timer, APP_TIMER_TICKS(BATTERY_TIME_INTERVAL), NULL);
+       APP_ERROR_CHECK(err_code);
+			 err_code = app_timer_start(temp_timer, APP_TIMER_TICKS(TEMP_TIME_INTERVAL), NULL);
        APP_ERROR_CHECK(err_code);
 }
 
@@ -1107,6 +1138,7 @@ int main(void)
     NRF_LOG_INFO("Buttonless DFU Application started.");
 
     // Start execution.
+		nrf_temp_init();
 		saadc_init();
     application_timers_start();
     advertising_start();
