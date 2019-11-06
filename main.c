@@ -95,14 +95,15 @@
 
 #include "nrf_temp.h"
 
-static const char DEVICE_NAME[] =       {0xe7, 0x82, 0xb9,
-																					0xe6, 0x88, 0x91, 
-																					0xe6, 0xb5, 0x8b, 
-																					0xe7, 0x89, 0x99, 
-																					0xf0, 0x9f, 0x98, 0x9d}; /**< Name of device. Will be included in the advertising data. */
+static const char DEVICE_NAME[] =       "pH Sensor";
+//	{0xe7, 0x82, 0xb9,
+//																					0xe6, 0x88, 0x91, 
+//																					0xe6, 0xb5, 0x8b, 
+//																					0xe7, 0x89, 0x99, 
+//																					0xf0, 0x9f, 0x98, 0x9d}; /**< Name of device. Will be included in the advertising data. */
 
 #define MANUFACTURER_NAME               "TianJinUniversity"                       /**< Manufacturer. Will be passed to Device Information Service. */
-#define APP_ADV_INTERVAL                3000                                         /**< The advertising interval (in units of 0.625 ms. This value corresponds to 187.5 ms). */
+#define APP_ADV_INTERVAL                200                                         /**< The advertising interval (in units of 0.625 ms. This value corresponds to 187.5 ms). */
 #define APP_ADV_DURATION                0                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -128,7 +129,7 @@ static const char DEVICE_NAME[] =       {0xe7, 0x82, 0xb9,
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
-#define ADC_ACQUIRE_TIME_INTERVAL       3000   //ms default:60000
+#define ADC_ACQUIRE_TIME_INTERVAL       60000   //ms default:60000
 #define BATTERY_TIME_INTERVAL           60000   //ms default:60000
 #define TEMP_TIME_INTERVAL              500
 #define TOTAL_USE_TIME                  4320   //minutes
@@ -155,8 +156,9 @@ NRF_QUEUE_DEF(nrf_saadc_value_t, m_adc_queue, QUEUE_SIZE, NRF_QUEUE_MODE_OVERFLO
 // YOUR_JOB: Use UUIDs for service(s) used in your application.
 //static ble_uuid_t m_adv_uuids[] = {{BLE_UUID_DEVICE_INFORMATION_SERVICE, BLE_UUID_TYPE_BLE}};
 
-static void temp_timer_handler(void * p_context)
-{
+static int32_t temp_reader(){
+
+
 		int32_t volatile temp;
 		NRF_TEMP->TASKS_START = 1; /** Start the temperature measurement. */
 
@@ -169,12 +171,32 @@ static void temp_timer_handler(void * p_context)
 		NRF_TEMP->EVENTS_DATARDY = 0;
 
 		/**@note Workaround for PAN_028 rev2.0A anomaly 29 - TEMP: Stop task clears the TEMP register. */
-		temp = (nrf_temp_read() / 4);
+		temp = nrf_temp_read();
 
 		/**@note Workaround for PAN_028 rev2.0A anomaly 30 - TEMP: Temp module analog front end does not power down when DATARDY event occurs. */
 		NRF_TEMP->TASKS_STOP = 1; /** Stop the temperature measurement. */
+		
+		return temp;
 
-		NRF_LOG_INFO("Actual temperature: %d", (int)temp);
+}
+
+//static int32_t temp_reader(){
+
+
+//		int32_t temp = 0;
+//		
+//		for(int i=0;i<8;i++)
+//			temp += temp_reader_single();
+//		
+//		return temp / 8;
+
+//}
+
+static void temp_timer_handler(void * p_context)
+{
+		int32_t volatile temp;
+		temp = temp_reader();
+		NRF_LOG_INFO("Actual temperature: %d", temp);
 }
 
 static void batt_timer_handler(void * p_context)
@@ -207,9 +229,7 @@ static uint16_t getAvailableCount(){
 
 static float ADCtoVoltage(nrf_saadc_value_t saadc_val){
 	
-	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
-	
-	float voltage = (1250.0f - accurate)/AMP_FACTOR;
+	float voltage = (float)saadc_val * 1800.0f / 4096.0f;
 	
 	return voltage;
 }
@@ -217,15 +237,17 @@ static float ADCtoVoltage(nrf_saadc_value_t saadc_val){
 static void send_one_sample(nrf_saadc_value_t saadc_val, int32_t count){
 	
 	ret_code_t err_code;
-	float accurate = (float)saadc_val * 1800.0f / 4096.0f;
+	float accurate = ADCtoVoltage(saadc_val);
 	
 	float phvoltage = (1250.0f - accurate) / AMP_FACTOR;
+	
+	float temp = (float)temp_reader() / 4.0f;
 				
 	char sendtemp[200];
-	uint16_t llength = sprintf(sendtemp,"ADC value: %d\nADC voltage: %.4f mV\nPH voltage: %.4f mV\n",
+	uint16_t llength = sprintf(sendtemp,"ADC value: %d\nADC voltage: %.4f mV\nPH voltage: %.4f mV\nTemp: %.4f oC\n",
 																																						saadc_val, 
 																																						accurate, 
-																																						phvoltage);
+																																						phvoltage,temp);
 			
 	err_code = ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
 	APP_ERROR_CHECK(err_code);
@@ -569,7 +591,7 @@ static void nus_data_handler(ble_nus_evt_t * p_evt)
 	uint16_t i,llength,available;
 	nrf_saadc_value_t saadc_val;
 	int16_t sendValueBuf[121];
-	
+	int16_t temp;
     if (p_evt->type == BLE_NUS_EVT_RX_DATA)
     {
 			
@@ -611,9 +633,9 @@ static void nus_data_handler(ble_nus_evt_t * p_evt)
 					break;
 				case 'c':
 					
-				//saadc_val = get_average_adc(0);
-				err_code = nrfx_saadc_sample_convert(0,&saadc_val);
-				APP_ERROR_CHECK(err_code);
+				saadc_val = get_average_adc(0);
+//				err_code = nrfx_saadc_sample_convert(0,&saadc_val);
+//				APP_ERROR_CHECK(err_code);
 				send_one_sample(saadc_val,0);
 				
 				
@@ -621,8 +643,10 @@ static void nus_data_handler(ble_nus_evt_t * p_evt)
 					break;
 				case 'd':
 					
-				
-				
+					temp = temp_reader();
+					llength = 2;
+					err_code = ble_nus_data_send(&m_nus, (uint8_t*)&temp, &llength, m_conn_handle);
+					APP_ERROR_CHECK(err_code);
 				
 				
 					break;
