@@ -129,7 +129,7 @@ static const char DEVICE_NAME[] =       "pH Sensor";
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
-#define ADC_ACQUIRE_TIME_INTERVAL       60000   //ms default:60000
+#define ADC_ACQUIRE_TIME_INTERVAL       1000   //ms default:60000
 #define BATTERY_TIME_INTERVAL           60000   //ms default:60000
 #define TEMP_TIME_INTERVAL              500
 #define TOTAL_USE_TIME                  4320   //minutes
@@ -277,9 +277,19 @@ static void adc_timer_handler(void * p_context)
 	
 	nrf_saadc_value_t saadc_val = get_average_adc(0);
 	
-	if(!nrf_queue_is_full(&m_adc_queue))
-		adc_value_count++;
-	nrf_queue_push(&m_adc_queue,&saadc_val);
+	float accurate = ADCtoVoltage(saadc_val);
+	
+	float phvoltage = (1250.0f - accurate) / AMP_FACTOR;
+	
+	char sendtemp[20];
+	uint16_t llength = sprintf(sendtemp,"%.4f",phvoltage);
+			
+	ret_code_t err_code = ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
+	//APP_ERROR_CHECK(err_code);
+	
+//	if(!nrf_queue_is_full(&m_adc_queue))
+//		adc_value_count++;
+//	nrf_queue_push(&m_adc_queue,&saadc_val);
 
 }
 
