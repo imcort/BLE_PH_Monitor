@@ -67,6 +67,8 @@
 #include "app_util_platform.h"
 //#include "bsp_btn_ble.h"
 #include "nrf_pwr_mgmt.h"
+#include "nrf_drv_saadc.h"
+#include "nrf_temp.h"
 
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
@@ -82,33 +84,35 @@
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Nordic_UART"                               /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "pH & Ca Sensor"                                 /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
 
-#define APP_ADV_INTERVAL                64                                          /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
+#define APP_ADV_INTERVAL                1000                                          /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
 
 #define APP_ADV_DURATION                0                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
 
-#define MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
-#define MAX_CONN_INTERVAL               MSEC_TO_UNITS(75, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */
+#define MIN_CONN_INTERVAL               MSEC_TO_UNITS(100, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
+#define MAX_CONN_INTERVAL               MSEC_TO_UNITS(1000, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */
 #define SLAVE_LATENCY                   0                                           /**< Slave latency. */
-#define CONN_SUP_TIMEOUT                MSEC_TO_UNITS(4000, UNIT_10_MS)             /**< Connection supervisory timeout (4 seconds), Supervision Timeout uses 10 ms units. */
-#define FIRST_CONN_PARAMS_UPDATE_DELAY  APP_TIMER_TICKS(5000)                       /**< Time from initiating event (connect or start of notification) to first time sd_ble_gap_conn_param_update is called (5 seconds). */
+#define CONN_SUP_TIMEOUT                MSEC_TO_UNITS(10000, UNIT_10_MS)             /**< Connection supervisory timeout (4 seconds), Supervision Timeout uses 10 ms units. */
+#define FIRST_CONN_PARAMS_UPDATE_DELAY  APP_TIMER_TICKS(1)                       /**< Time from initiating event (connect or start of notification) to first time sd_ble_gap_conn_param_update is called (5 seconds). */
 #define NEXT_CONN_PARAMS_UPDATE_DELAY   APP_TIMER_TICKS(30000)                      /**< Time between each call to sd_ble_gap_conn_param_update after the first call (30 seconds). */
 #define MAX_CONN_PARAMS_UPDATE_COUNT    3                                           /**< Number of attempts before giving up the connection parameter negotiation. */
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
-#define UART_TX_BUF_SIZE                256                                         /**< UART TX buffer size. */
-#define UART_RX_BUF_SIZE                256                                         /**< UART RX buffer size. */
-
+//#define UART_TX_BUF_SIZE                256                                         /**< UART TX buffer size. */
+//#define UART_RX_BUF_SIZE                256                                         /**< UART RX buffer size. */
+#define SAMPLE_AVERAGE_COUNT            128	
 
 BLE_NUS_DEF(m_nus, NRF_SDH_BLE_TOTAL_LINK_COUNT);                                   /**< BLE NUS service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                                           /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);                                                             /**< Context for the Queued Write module.*/
 BLE_ADVERTISING_DEF(m_advertising);                                                 /**< Advertising module instance. */
+
+APP_TIMER_DEF(adc_timer);
 
 static uint16_t   m_conn_handle          = BLE_CONN_HANDLE_INVALID;                 /**< Handle of the current connection. */
 static uint16_t   m_ble_nus_max_data_len = BLE_GATT_ATT_MTU_DEFAULT - 3;            /**< Maximum length of data (in bytes) that can be transmitted to the peer by the Nordic UART service module. */
@@ -116,6 +120,126 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 {
     {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}
 };
+#define ADC_ACQUIRE_TIME_INTERVAL       2000   //ms default:60000
+void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
+{
+	
+}
+
+void saadc_init(void)
+{
+    ret_code_t err_code;
+	
+    err_code = nrf_drv_saadc_init(NULL, saadc_callback);
+    APP_ERROR_CHECK(err_code);
+	
+    nrf_saadc_channel_config_t channel_0_config = 
+		{                                                   \
+				.resistor_p = NRF_SAADC_RESISTOR_DISABLED,      \
+				.resistor_n = NRF_SAADC_RESISTOR_DISABLED,      \
+				.gain       = NRF_SAADC_GAIN1_3,                \
+				.reference  = NRF_SAADC_REFERENCE_INTERNAL,     \
+				.acq_time   = NRF_SAADC_ACQTIME_40US,           \
+				.mode       = NRF_SAADC_MODE_SINGLE_ENDED,      \
+				.burst      = NRF_SAADC_BURST_ENABLED,         \
+				.pin_p      = (nrf_saadc_input_t)(NRF_SAADC_INPUT_AIN3),       \
+				.pin_n      = NRF_SAADC_INPUT_DISABLED          \
+		};
+		
+		nrf_saadc_channel_config_t channel_1_config = 
+		{                                                   \
+				.resistor_p = NRF_SAADC_RESISTOR_DISABLED,      \
+				.resistor_n = NRF_SAADC_RESISTOR_DISABLED,      \
+				.gain       = NRF_SAADC_GAIN1_3,                \
+				.reference  = NRF_SAADC_REFERENCE_INTERNAL,     \
+				.acq_time   = NRF_SAADC_ACQTIME_40US,           \
+				.mode       = NRF_SAADC_MODE_SINGLE_ENDED,      \
+				.burst      = NRF_SAADC_BURST_ENABLED,         \
+				.pin_p      = (nrf_saadc_input_t)(NRF_SAADC_INPUT_AIN2),       \
+				.pin_n      = NRF_SAADC_INPUT_DISABLED          \
+		};
+
+		nrf_saadc_channel_config_t channel_2_config = NRF_DRV_SAADC_DEFAULT_CHANNEL_CONFIG_SE(NRF_SAADC_INPUT_VDD);
+
+    err_code = nrf_drv_saadc_channel_init(0, &channel_0_config);
+		APP_ERROR_CHECK(err_code);
+		err_code = nrf_drv_saadc_channel_init(1, &channel_1_config);
+		APP_ERROR_CHECK(err_code);
+		err_code = nrf_drv_saadc_channel_init(2, &channel_2_config);
+		APP_ERROR_CHECK(err_code);
+
+
+}
+
+static nrf_saadc_value_t get_average_adc(uint8_t channel){
+	ret_code_t err_code;
+	int32_t sample_average = 0;
+	nrf_saadc_value_t saadc_val;
+	
+	for(int i=0;i<SAMPLE_AVERAGE_COUNT;i++){
+		
+		err_code = nrfx_saadc_sample_convert(channel,&saadc_val);
+		APP_ERROR_CHECK(err_code);
+		sample_average += saadc_val;
+	
+	}
+	sample_average /= SAMPLE_AVERAGE_COUNT;
+
+	return sample_average;
+
+}
+
+static float ADCtoVoltage(nrf_saadc_value_t saadc_val){
+	
+	float voltage = (float)saadc_val * 1800.0f / 4096.0f;
+	
+	return voltage;
+}
+
+static int32_t temp_reader(){
+
+
+		int32_t volatile temp;
+		NRF_TEMP->TASKS_START = 1; /** Start the temperature measurement. */
+
+		/* Busy wait while temperature measurement is not finished, you can skip waiting if you enable interrupt for DATARDY event and read the result in the interrupt. */
+		/*lint -e{845} // A zero has been given as right argument to operator '|'" */
+		while (NRF_TEMP->EVENTS_DATARDY == 0)
+		{
+				// Do nothing.
+		}
+		NRF_TEMP->EVENTS_DATARDY = 0;
+
+		/**@note Workaround for PAN_028 rev2.0A anomaly 29 - TEMP: Stop task clears the TEMP register. */
+		temp = nrf_temp_read();
+
+		/**@note Workaround for PAN_028 rev2.0A anomaly 30 - TEMP: Temp module analog front end does not power down when DATARDY event occurs. */
+		NRF_TEMP->TASKS_STOP = 1; /** Stop the temperature measurement. */
+		
+		return temp;
+
+}
+
+static void adc_timer_handler(void * p_context)
+{
+	
+	
+	nrf_saadc_value_t saadc_val;
+	
+	saadc_val = get_average_adc(0);
+	float pH_V = ADCtoVoltage(saadc_val);
+	
+	saadc_val = get_average_adc(1);
+	float Ca_V = ADCtoVoltage(saadc_val);
+	
+	
+	
+	char sendtemp[40];
+	uint16_t llength = sprintf(sendtemp,"%.4f,%.4f,%d\r\n", pH_V, Ca_V, temp_reader());
+			
+	ret_code_t err_code = ble_nus_data_send(&m_nus, (uint8_t*)sendtemp, &llength, m_conn_handle);
+
+}
 
 
 /**@brief Function for assert macro callback.
@@ -138,8 +262,14 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
  */
 static void timers_init(void)
 {
-    ret_code_t err_code = app_timer_init();
+    ret_code_t err_code;
+		err_code = app_timer_init();
     APP_ERROR_CHECK(err_code);
+	
+		err_code = app_timer_create(&adc_timer, APP_TIMER_MODE_REPEATED, adc_timer_handler);
+    APP_ERROR_CHECK(err_code); 
+	
+	
 }
 
 /**@brief Function for the GAP initialization.
@@ -517,6 +647,8 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             NRF_LOG_INFO("Connected");
 //            err_code = bsp_indication_set(BSP_INDICATE_CONNECTED);
 //            APP_ERROR_CHECK(err_code);
+						 err_code = app_timer_start(adc_timer, APP_TIMER_TICKS(ADC_ACQUIRE_TIME_INTERVAL), NULL);
+						 APP_ERROR_CHECK(err_code);
             m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
             err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
             APP_ERROR_CHECK(err_code);
@@ -524,6 +656,8 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
 
         case BLE_GAP_EVT_DISCONNECTED:
             NRF_LOG_INFO("Disconnected");
+						 err_code = app_timer_stop(adc_timer);
+						 APP_ERROR_CHECK(err_code);
             // LED indication will be changed when advertising starts.
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
             break;
@@ -734,7 +868,7 @@ static void advertising_init(void)
 
     init.advdata.name_type          = BLE_ADVDATA_FULL_NAME;
     init.advdata.include_appearance = false;
-    init.advdata.flags              = BLE_GAP_ADV_FLAG_LE_GENERAL_DISC_MODE;
+    init.advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
 
     init.srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
     init.srdata.uuids_complete.p_uuids  = m_adv_uuids;
@@ -824,8 +958,8 @@ int main(void)
     log_init();
 	
 		// Initialize the async SVCI interface to bootloader before any interrupts are enabled.
-    err_code = ble_dfu_buttonless_async_svci_init();
-    APP_ERROR_CHECK(err_code);
+//    err_code = ble_dfu_buttonless_async_svci_init();
+//    APP_ERROR_CHECK(err_code);
 	
     timers_init();
     //buttons_leds_init(&erase_bonds);
@@ -840,6 +974,9 @@ int main(void)
     // Start execution.
     //printf("\r\nUART started.\r\n");
     NRF_LOG_INFO("Debug logging for UART over RTT started.");
+		nrf_temp_init();
+		saadc_init();
+		
     advertising_start();
 
     // Enter main loop.
