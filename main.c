@@ -120,7 +120,7 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 {
     {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}
 };
-#define ADC_ACQUIRE_TIME_INTERVAL       2000   //ms default:60000
+#define ADC_ACQUIRE_TIME_INTERVAL       5000   //ms default:60000
 void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
 {
 	
